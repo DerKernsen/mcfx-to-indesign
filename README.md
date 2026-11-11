@@ -27,7 +27,7 @@ final print PDF from InDesign after applying the printer's requirements.
 
 ## Requirements
 
-- Python 3.9 or later and the Python dependencies Pillow and ReportLab.
+- Python 3.10 or later and the Python dependencies Pillow and ReportLab.
 - Adobe InDesign with ExtendScript (`.jsx`) support. The Python conversion can
   prepare files without InDesign, but creating `.indd` files requires it.
 - A **saved, closed** SQLite-based `.mcfx` project. The converter opens it

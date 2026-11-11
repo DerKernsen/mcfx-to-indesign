@@ -10,9 +10,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Python 3.9 is not available on the Ubuntu 26.04 hosted image.
+        # Pin Linux to an image that supplies the oldest tested Python.
         os: [ubuntu-24.04, windows-latest]
-        python: ['3.9', '3.12']
+        python: ['3.10', '3.12']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
