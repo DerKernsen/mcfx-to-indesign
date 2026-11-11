@@ -6,6 +6,8 @@ embedded images and layout data, then generates an InDesign script that creates
 separate editable interior and cover documents. It also generates a reduced-size
 PDF for visual review.
 
+[Download the Windows app](https://github.com/DerKernsen/mcfx-to-indesign/releases/latest)
+
 **Early prototype:** validated end to end against one image-based CEWE Fotowelt
 8.2.1 project on Windows and with synthetic fixtures. This is not a general
 MCFX specification or a print-ready export. Other versions, products, and
@@ -25,7 +27,28 @@ The **preview PDF is not an editable InDesign project** and deliberately uses
 downsampled images. Open the generated `.indd` files for editing; export your
 final print PDF from InDesign after applying the printer's requirements.
 
-## Requirements
+## Windows desktop app
+
+1. Download `mcfx-to-indesign-windows-x64.zip` from the
+   [latest release](https://github.com/DerKernsen/mcfx-to-indesign/releases/latest).
+2. Extract the archive and open `MCFX-to-InDesign.exe`. The app is an unsigned
+   Windows x64 build; Python does not need to be installed to run it.
+3. Save and close the project in CEWE, then select the `.mcfx` file in the app.
+4. Choose a **new** output folder. The converter refuses to overwrite an
+   existing folder. Keep the default coordinate unit unless you have verified a
+   different value for your project.
+5. Click **Convert project** and wait for completion. Use **Open output folder**
+   to find the preview PDF and the generated InDesign script.
+6. Follow [Create the editable documents](#create-the-editable-documents) to
+   run that script in Adobe InDesign. The app does not create `.indd` files by
+   itself.
+
+The app processes files locally and does not upload projects. It stays open
+while a conversion is running; if a conversion fails, choose a new output folder
+for the next attempt. The Windows executable includes third-party components;
+their licenses are included in the release archive.
+
+## Requirements for running from source
 
 - Python 3.10 or later and the Python dependencies Pillow and ReportLab.
 - Adobe InDesign with ExtendScript (`.jsx`) support. The Python conversion can
@@ -36,7 +59,7 @@ final print PDF from InDesign after applying the printer's requirements.
 - Adequate free disk space. Extracted assets, compatibility TIFFs and preview
   files can be large.
 
-## Installation
+## Installation from source
 
 ```powershell
 git clone https://github.com/DerKernsen/mcfx-to-indesign.git
@@ -48,7 +71,10 @@ python -m pip install .
 
 On macOS or Linux, activate with `source .venv/bin/activate`. Running the JSX
 still requires a compatible InDesign installation; the complete workflow has
-only been exercised on Windows.
+only been exercised on Windows. To start the graphical interface from the
+installed package, run `mcfx-to-indesign-gui`. On Linux, the system's Tkinter
+package and a graphical display may also be required. From a source checkout,
+run `python mcfx_gui.py`.
 
 ## Convert a project
 
@@ -144,6 +170,19 @@ directories. They do not need CEWE, InDesign, an account, or real photo books:
 ```powershell
 python -m unittest discover -s tests -v
 ```
+
+The unit suite tests the GUI's validation and background worker without opening
+a window. The Windows release build should also be checked interactively with a
+synthetic project before publication. To build the standalone Windows executable
+from a clean virtual environment:
+
+```powershell
+python -m pip install . "pyinstaller>=6,<7"
+python -m PyInstaller --noconfirm --clean --onefile --windowed `
+  --name MCFX-to-InDesign mcfx_gui.py
+```
+
+The executable appears in `dist/`. A source-built binary is not code-signed.
 
 ## Acknowledgements and license
 

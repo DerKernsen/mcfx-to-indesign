@@ -34,5 +34,7 @@ venv/
 *.egg-info/
 build/
 dist/
+release/
+*.spec
 .DS_Store
 Thumbs.db

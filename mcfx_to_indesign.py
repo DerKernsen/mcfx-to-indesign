@@ -22,9 +22,6 @@ from PIL import Image, ImageOps
 from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
 
-SCALE = 72 / 254  # Default inferred from a single project, not a format guarantee.
-
-
 def sha256_file(path):
     digest = hashlib.sha256()
     with path.open('rb') as stream:
@@ -52,22 +49,21 @@ class TextOnly(html.parser.HTMLParser):
             self.visible.append(value)
 
 
-def main():
-    global SCALE
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument('source', type=Path, help='Path to a quiescent or snapshot MCFX')
-    ap.add_argument('output', type=Path, help='New output directory (must not exist)')
-    ap.add_argument('--unit-mm', type=float, default=0.1,
-                    help='Millimetres per project coordinate unit (default: 0.1; verify against your project)')
-    args = ap.parse_args()
-    if not math.isfinite(args.unit_mm) or args.unit_mm <= 0:
-        ap.error('--unit-mm must be a positive, finite number')
-    SCALE = args.unit_mm * 72 / 25.4
-    src, out = args.source.resolve(), args.output.resolve()
+def convert(source, output, unit_mm=0.1, progress=None):
+    """Convert a saved MCFX; return a report and optionally emit progress text."""
+    if not math.isfinite(unit_mm) or unit_mm <= 0:
+        raise ValueError('--unit-mm must be a positive, finite number')
+    scale = unit_mm * 72 / 25.4
+    src, out = Path(source).resolve(), Path(output).resolve()
     if not src.is_file():
-        raise SystemExit('Source file not found')
+        raise FileNotFoundError('Source file not found')
     if out.exists():
-        raise SystemExit('Output already exists; refusing to overwrite')
+        raise FileExistsError('Output already exists; refusing to overwrite')
+    def notify(message):
+        if progress:
+            progress(message)
+
+    notify('Reading saved project...')
     with closing(sqlite3.connect(src.as_uri() + '?mode=ro', uri=True)) as db:
         row = db.execute('SELECT Data FROM Files WHERE Filename=?', ('data.mcf',)).fetchone()
         if not row:
@@ -105,6 +101,7 @@ def main():
         if any(float(a.find('position').get('rotation', '0')) for a in root.iter('area') if a.get('areatype')=='imagearea'):
             raise ValueError('Rotated image frames are not supported')
 
+        notify('Extracting images and reconstructing page frames...')
         out.mkdir(parents=True)
         links = out / 'Links'
         links.mkdir()
@@ -145,6 +142,8 @@ def main():
                         raise ValueError('JPEG extraction verification failed: ' + name)
                 info = {'file':filename,'size':list(size),'source':name,'source_sha256':hashlib.sha256(data).hexdigest()}
                 assets[name] = info
+                if item_id % 10 == 0:
+                    notify(f'Extracted {item_id} unique images...')
             return info
 
         def parse_area(a, xoff=0):
@@ -191,7 +190,7 @@ def main():
         # PDF is an independent, downsampled visual reference only; the native
         # InDesign project uses the extracted full-resolution linked assets.
         def draw_pdf_item(c, item, page_h, scratch):
-            x,y,w,h = [n*SCALE for n in item['frame']]
+            x,y,w,h = [n*scale for n in item['frame']]
             data=item['image']
             if data is None:
                 return
@@ -203,23 +202,27 @@ def main():
                     im.thumbnail((1600,1600))
                     im.save(tmp,'JPEG',quality=85)
                 preview_paths[data['file']]=tmp
-            ix,iy,iw,ih=[n*SCALE for n in data['bounds']]
+            ix,iy,iw,ih=[n*scale for n in data['bounds']]
             c.saveState()
             path=c.beginPath();path.rect(x,page_h-y-h,w,h);c.clipPath(path,stroke=0,fill=0)
             c.drawImage(ImageReader(str(preview_paths[data['file']])),ix,page_h-iy-ih,iw,ih)
             c.restoreState()
         pdf=out/'CEWE - Layout-Vorschau.pdf'
-        c=canvas.Canvas(str(pdf),pagesize=(coverw*SCALE,coverh*SCALE),pageCompression=1)
+        notify('Rendering the visual preview...')
+        c=canvas.Canvas(str(pdf),pagesize=(coverw*scale,coverh*scale),pageCompression=1)
         with tempfile.TemporaryDirectory() as tmp:
-            for it in cover_areas: draw_pdf_item(c,it,coverh*SCALE,tmp)
+            for it in cover_areas: draw_pdf_item(c,it,coverh*scale,tmp)
             c.showPage()
-            for page in pages:
-                c.setPageSize((half*SCALE,bh*SCALE))
-                for it in page: draw_pdf_item(c,it,bh*SCALE,tmp)
+            for index, page in enumerate(pages, 1):
+                c.setPageSize((half*scale,bh*scale))
+                for it in page: draw_pdf_item(c,it,bh*scale,tmp)
                 c.showPage()
+                if index % 10 == 0 or index == len(pages):
+                    notify(f'Rendered {index} of {len(pages)} interior pages...')
         c.save()
 
-        payload={'width':half,'height':bh,'coverwidth':coverw,'coverheight':coverh,'scale':SCALE,'pages':pages,'cover':cover_areas}
+        notify('Writing the InDesign script and conversion report...')
+        payload={'width':half,'height':bh,'coverwidth':coverw,'coverheight':coverh,'scale':scale,'pages':pages,'cover':cover_areas}
         (out/'layout.json').write_text(json.dumps(payload,indent=2),encoding='utf-8')
         (out/'asset-manifest.json').write_text(json.dumps(list(assets.values()),indent=2,ensure_ascii=False),encoding='utf-8')
 
@@ -275,9 +278,21 @@ def main():
                 .replace('OUTPUT_DIR',json.dumps(out.as_posix())))
         (out/'CEWE in InDesign importieren.jsx').write_text(jsx,encoding='utf-8-sig')
         counts=Counter('image' if x['image'] else 'empty' for page in pages for x in page)
-        report={'source':str(src),'source_sha256':sha256_file(src),'coordinate_unit_mm':args.unit_mm,'interior_pages':len(pages),'interior_frames':dict(counts),'cover_frames':len(cover_areas),'embedded_assets':len(assets),'covered_area_types':dict(Counter(a.get('areatype') for a in root.iter('area'))),'limitations':['No support for nonempty text, rotated images, crossing image frames, filters, or arbitrary background artwork; some unsupported features may not be detected.','The PDF is a downsampled visual reference; compare it with CEWE.','The coordinate-unit size is inferred, not a documented format guarantee; verify the printer specifications.']}
+        report={'source':str(src),'source_sha256':sha256_file(src),'coordinate_unit_mm':unit_mm,'interior_pages':len(pages),'interior_frames':dict(counts),'cover_frames':len(cover_areas),'embedded_assets':len(assets),'covered_area_types':dict(Counter(a.get('areatype') for a in root.iter('area'))),'limitations':['No support for nonempty text, rotated images, crossing image frames, filters, or arbitrary background artwork; some unsupported features may not be detected.','The PDF is a downsampled visual reference; compare it with CEWE.','The coordinate-unit size is inferred, not a documented format guarantee; verify the printer specifications.']}
         (out/'conversion-report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
-        print(json.dumps(report,indent=2))
+        notify('Conversion complete.')
+        return report
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument('source', type=Path, help='Path to a quiescent or snapshot MCFX')
+    ap.add_argument('output', type=Path, help='New output directory (must not exist)')
+    ap.add_argument('--unit-mm', type=float, default=0.1,
+                    help='Millimetres per project coordinate unit (default: 0.1; verify against your project)')
+    args = ap.parse_args()
+    report = convert(args.source, args.output, args.unit_mm)
+    print(json.dumps(report,indent=2))
 
 
 if __name__=='__main__':
