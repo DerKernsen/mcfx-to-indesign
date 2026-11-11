@@ -10,7 +10,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        # Python 3.9 is not available on the Ubuntu 26.04 hosted image.
+        os: [ubuntu-24.04, windows-latest]
         python: ['3.9', '3.12']
     steps:
       - uses: actions/checkout@v4
